@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "devsync"
+version = "0.1.0"
+description = "Bidirectional dev environment sync over SSH"
+requires-python = ">=3.8"
+
+[project.scripts]
+devsync = "devsync:main"

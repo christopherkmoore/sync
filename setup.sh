@@ -1,19 +1,32 @@
 #!/bin/bash
 set -e
 
-DEVSYNC_DIR="$HOME/Code/devsync"
-SHELL_RC="$HOME/.zshrc"
-
 echo "=== devsync setup ==="
+
+read -p "Install directory [$HOME/Code/devsync]: " DEVSYNC_DIR
+DEVSYNC_DIR="${DEVSYNC_DIR:-$HOME/Code/devsync}"
+
+# Detect shell config
+if [ -f "$HOME/.zshrc" ]; then
+    SHELL_RC="$HOME/.zshrc"
+elif [ -f "$HOME/.bashrc" ]; then
+    SHELL_RC="$HOME/.bashrc"
+else
+    SHELL_RC="$HOME/.profile"
+fi
 
 # Create directory if needed
 mkdir -p "$DEVSYNC_DIR"
 
 # Copy files from remote if this is a fresh install
 if [ ! -f "$DEVSYNC_DIR/devsync.py" ]; then
-    read -p "Remote host (e.g. christophermoore@192.168.1.187): " REMOTE_HOST
-    read -p "Remote devsync path [/Users/christophermoore/Code/devsync]: " REMOTE_PATH
-    REMOTE_PATH="${REMOTE_PATH:-/Users/christophermoore/Code/devsync}"
+    read -p "Remote host (e.g. user@192.168.1.100): " REMOTE_HOST
+    read -p "Remote devsync path (e.g. /Users/someone/Code/devsync): " REMOTE_PATH
+
+    if [ -z "$REMOTE_HOST" ] || [ -z "$REMOTE_PATH" ]; then
+        echo "Error: both remote host and path are required."
+        exit 1
+    fi
 
     echo "Copying devsync files..."
     scp "$REMOTE_HOST:$REMOTE_PATH/devsync.py" "$DEVSYNC_DIR/"
@@ -49,7 +62,7 @@ if [ ! -f "$HOME/.ssh/id_ed25519" ]; then
     ssh-keygen -t ed25519 -f "$HOME/.ssh/id_ed25519" -N ""
     echo ""
     echo "Run this to set up passwordless auth:"
-    echo "  ssh-copy-id christophermoore@<your-personal-machine-ip>"
+    echo "  ssh-copy-id <user>@<remote-machine-ip>"
 else
     echo "SSH key already exists."
 fi

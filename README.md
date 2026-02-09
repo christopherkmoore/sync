@@ -1,6 +1,6 @@
 # devsync
 
-Bidirectional dev environment sync over SSH. Sync something between two computers on the same network (or not, if you're into that sort of thing).
+Bidirectional dev environment sync over SSH. Built for syncing code between two machines on the same network.
 
 ## Quick Start
 
@@ -30,12 +30,12 @@ ssh-copy-id user@<personal-ip>
 ## Usage
 
 ```bash
-# Find SSH hosts on your network
+# Check trusted hosts (and fix stale IPs)
 devsync scan
 
 # Create a sync profile
 devsync init myproject \
-  --host user@192.168.1.187 \
+  --host user@10.0.0.20 \
   --remote /Users/user/Code/myproject \
   --local ~/Documents/Github/myproject
 
@@ -54,6 +54,22 @@ devsync remove myproject     # delete a profile
 devsync help
 ```
 
+## IP Changed?
+
+DHCP assigns new IPs when you switch networks or routers restart. Just run:
+
+```bash
+devsync scan
+```
+
+It checks all trusted hosts, flags any unreachable profiles, and prompts you to pick a reachable host to update them to. One command, all profiles fixed.
+
+Or edit the config directly:
+
+```bash
+vim devsync.json
+```
+
 ## Configuration
 
 Profiles are stored as JSON. Two locations are supported:
@@ -64,7 +80,7 @@ Profiles are stored as JSON. Two locations are supported:
 Use `--local-config` with init to create a local config file you can edit directly:
 
 ```bash
-devsync init myproject --host user@ip --remote /path --local /path --local-config
+devsync init myproject --host user@10.0.0.20 --remote /path --local /path --local-config
 vim devsync.json  # easy to update IPs, paths, excludes
 ```
 
@@ -79,9 +95,16 @@ Every profile starts with these excludes:
 Add more with `--exclude`:
 
 ```bash
-devsync init myproject --host user@ip --remote /path --local /path \
+devsync init myproject --host user@10.0.0.20 --remote /path --local /path \
   --exclude "*.xcuserstate" --exclude "Pods"
 ```
+
+## Troubleshooting
+
+- **Sync times out**: Run `devsync scan` to check if the remote host is reachable. IP may have changed.
+- **VPN breaks connectivity**: Disconnect VPN on the machine initiating the connection. VPN reroutes local traffic.
+- **Remote Login on but SSH not working**: Toggle Remote Login off and on, or run `sudo systemsetup -setremotelogin off && sudo systemsetup -setremotelogin on`.
+- **Password every time**: Set up SSH keys with `ssh-keygen -t ed25519` and `ssh-copy-id user@host`.
 
 ## Files
 

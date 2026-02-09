@@ -201,7 +201,7 @@ def discover_lan_hosts():
     """Use arp table to find hosts on the local network with SSH open."""
     try:
         result = subprocess.run(
-            ["arp", "-a"], capture_output=True, text=True, timeout=5,
+            ["arp", "-a"], capture_output=True, text=True, timeout=30,
         )
     except FileNotFoundError:
         return []
@@ -221,56 +221,88 @@ def discover_lan_hosts():
 
 
 def cmd_scan(args):
-    rsa_hosts = parse_known_hosts()
+    profiles = load_profiles()
 
-    if rsa_hosts:
-        print("Trusted RSA hosts (from known_hosts):\n")
-        seen = set()
-        for entry in rsa_hosts:
-            h = entry["host"]
-            if h in seen:
-                continue
-            seen.add(h)
-            # try to resolve a hostname for bare IPs
-            label = h
-            try:
-                name, _, _ = socket.gethostbyaddr(h)
-                if name != h:
-                    label = f"{h} ({name})"
-            except (socket.herror, socket.gaierror, OSError):
-                pass
-            reachable = probe_ssh(h)
-            status = f"  SSH: {reachable}" if reachable else "  SSH: unreachable"
-            print(f"  {label}  {status}")
+    # Collect IPs to check: profile hosts + known_hosts RSA entries
+    hosts_to_check = set()
+    for p in profiles.values():
+        host = p["host"]
+        hosts_to_check.add(host.split("@")[-1] if "@" in host else host)
+    for entry in parse_known_hosts():
+        hosts_to_check.add(entry["host"])
+
+    if not hosts_to_check:
+        print("No known hosts to check. Add a profile or SSH into a machine first.")
         return 0
 
-    print("No trusted RSA hosts found in known_hosts.")
-    print("Scanning local network for SSH services...\n")
-
-    lan_hosts = discover_lan_hosts()
-    if not lan_hosts:
-        print("  No hosts found in ARP table.")
-        return 0
-
-    found = 0
-    for ip in lan_hosts:
+    print("Checking trusted hosts...\n")
+    reachable = []
+    unreachable = []
+    for ip in sorted(hosts_to_check):
         banner = probe_ssh(ip)
+        try:
+            name, _, _ = socket.gethostbyaddr(ip)
+            label = f"{ip} ({name})" if name != ip else ip
+        except (socket.herror, socket.gaierror, OSError):
+            label = ip
         if banner:
-            try:
-                name, _, _ = socket.gethostbyaddr(ip)
-                label = f"{ip} ({name})"
-            except (socket.herror, socket.gaierror, OSError):
-                label = ip
-            print(f"  {label}")
-            print(f"    {banner}")
-            found += 1
+            print(f"  {GREEN}{label}  SSH: {banner}{RESET}")
+            reachable.append(ip)
+        else:
+            print(f"  {RED}{label}  unreachable{RESET}")
+            unreachable.append(ip)
 
-    if not found:
-        print("  No SSH services found on local network.")
-    else:
-        print(f"\n{found} host(s) with SSH open. Connect with:")
-        print("  ssh user@<host>   (to add to known_hosts)")
-        print("  devsync scan      (to verify)")
+    # Check if any profiles point to unreachable hosts
+    if not profiles:
+        return 0
+
+    profile_ips = {}
+    for name, p in profiles.items():
+        host = p["host"]
+        ip = host.split("@")[-1] if "@" in host else host
+        profile_ips.setdefault(ip, []).append(name)
+
+    stale_ips = set(profile_ips.keys()) & set(unreachable)
+    if not stale_ips:
+        return 0
+
+    if not reachable:
+        print(f"\n{YELLOW}Profiles point to unreachable hosts but no reachable hosts found.{RESET}")
+        return 0
+
+    print(f"\n{YELLOW}Stale profiles (host unreachable):{RESET}")
+    for ip in stale_ips:
+        print(f"  {RED}{ip}{RESET} (used by: {', '.join(profile_ips[ip])})")
+
+    print(f"\nReachable hosts:")
+    for i, ip in enumerate(reachable):
+        print(f"  [{i + 1}] {ip}")
+
+    choice = input(f"\nUpdate stale profiles to which host? [1-{len(reachable)}] (enter to skip): ").strip()
+    if not choice:
+        return 0
+
+    try:
+        new_ip = reachable[int(choice) - 1]
+    except (ValueError, IndexError):
+        print("Invalid choice.")
+        return 1
+
+    updated = 0
+    for name, p in profiles.items():
+        host = p["host"]
+        ip = host.split("@")[-1] if "@" in host else host
+        if ip in stale_ips:
+            if "@" in host:
+                p["host"] = f"{host.split('@')[0]}@{new_ip}"
+            else:
+                p["host"] = new_ip
+            updated += 1
+            print(f"  {GREEN}Updated {name}: {ip} -> {new_ip}{RESET}")
+
+    if updated:
+        save_profiles(profiles)
+        print(f"\n{updated} profile(s) updated.")
 
     return 0
 
@@ -284,7 +316,7 @@ Commands:
   push      Sync files from local machine to remote
   pull      Sync files from remote machine to local
   status    Preview what would change (dry-run both directions)
-  scan      Find trusted SSH hosts or discover SSH on local network
+  scan      Check trusted hosts and fix stale IPs
   list      Show all configured profiles
   remove    Delete a profile
   help      Show this help with examples
@@ -292,13 +324,16 @@ Commands:
 Examples:
 
   Set up a new profile:
-    devsync init myproject --host cmoore@192.168.1.187 --remote /Users/cmoore/Code/myproject --local ~/Documents/Github/myproject
+    devsync init myproject --host user@10.0.0.20 --remote /Users/user/Code/myproject --local ~/Documents/Github/myproject
 
   Set up a profile with extra excludes:
-    devsync init myproject --host cmoore@192.168.1.187 --remote /Users/cmoore/Code/myproject --local ~/Documents/Github/myproject --exclude "*.xcuserstate" --exclude "Pods"
+    devsync init myproject --host user@10.0.0.20 --remote /Users/user/Code/myproject --local ~/Documents/Github/myproject --exclude "*.xcuserstate" --exclude "Pods"
+
+  Save profile locally (easy to edit with vim):
+    devsync init myproject --host user@10.0.0.20 --remote /path --local /path --local-config
 
   Overwrite an existing profile:
-    devsync init myproject --host cmoore@192.168.1.187 --remote /path --local /path --force
+    devsync init myproject --host user@10.0.0.20 --remote /path --local /path --force
 
   Push local changes to the remote machine:
     devsync push myproject
@@ -309,7 +344,7 @@ Examples:
   See what's different without syncing:
     devsync status myproject
 
-  Find SSH hosts you can sync with:
+  Check hosts and update stale IPs:
     devsync scan
 
   List all your profiles:
@@ -319,11 +354,14 @@ Examples:
     devsync remove myproject
 
 Typical workflow:
-  1. devsync scan              (find your other machine)
+  1. devsync scan              (check hosts, fix IPs if they changed)
   2. devsync init <name> ...   (set up a profile)
   3. devsync push <name>       (send files over)
   4. ... work on the other machine ...
   5. devsync pull <name>       (bring changes back)
+
+IP changed? Just run:
+  devsync scan                 (detects stale IPs, prompts to update)
 
 Config:
   Global: ~/.config/devsync/profiles.json
@@ -401,7 +439,7 @@ def main():
     p_status.set_defaults(func=cmd_status)
 
     # scan
-    p_scan = sub.add_parser("scan", help="Find trusted RSA hosts or scan LAN for SSH")
+    p_scan = sub.add_parser("scan", help="Check trusted hosts and fix stale IPs")
     p_scan.set_defaults(func=cmd_scan)
 
     # help

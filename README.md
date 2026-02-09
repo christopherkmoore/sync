@@ -1,6 +1,6 @@
 # devsync
 
-Bidirectional dev environment sync over SSH. Built for syncing code between a personal machine and a work machine on the same network.
+Bidirectional dev environment sync over SSH. Sync something between two computers on the same network (or not, if you're into that sort of thing).
 
 ## Quick Start
 
